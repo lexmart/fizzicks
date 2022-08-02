@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+
+<style>
+body {
+	padding: 0;
+	margin: 0;
+	overflow: hidden;
+}
+.container {
+	position:relative;
+}
+#text {
+	position:absolute;
+	left:0px;
+	top:0px;
+	z-index:999;
+}
+</style>
+
+<div class="container">
+	<canvas id="main"></canvas>
+	<canvas id="text"></canvas>
+</div>
+
+<script id="line-vs" type="x-shader/x-vertex">
+
+attribute vec2 pos;
+
+uniform mat4 projFromWorld;
+uniform mat4 worldFromLocal;
+
+void main(void) {
+  	gl_Position = projFromWorld*worldFromLocal*vec4(pos, 0.0, 1.0);
+}
+
+</script>
+
+<script id="line-fs" type="x-shader/x-fragment">
+
+void main(void) {
+  gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+}
+
+</script>
+
+<script>
+	var canvas = document.querySelector("#main")
+	var textCanvas = document.querySelector("#text")
+
+	canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+	textCanvas.width = window.innerWidth;
+    textCanvas.height = window.innerHeight;
+	
+	var gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl")
+	var ctx = textCanvas.getContext("2d");
+
+	var vs = gl.createShader(gl.VERTEX_SHADER)
+	gl.shaderSource(vs, document.querySelector("#line-vs").textContent)
+	gl.compileShader(vs)
+	if(!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(vs))
+	
+	var fs = gl.createShader(gl.FRAGMENT_SHADER)
+	gl.shaderSource(fs, document.querySelector("#line-fs").textContent)
+	gl.compileShader(fs)
+	if(!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(fs))
+
+	var program = gl.createProgram()
+	gl.attachShader(program, vs)
+	gl.attachShader(program, fs)
+	gl.linkProgram(program)
+	if(!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program))
+	gl.useProgram(program)
+	
+	var camP = {
+		x: 0,
+		y: 0
+	}
+	var w = canvas.width
+	var h = canvas.height
+	var ppm = canvas.width/25
+	var projFromWorld = new Float32Array([
+		ppm/w, 	0.0, 	0.0, 	0.0,
+		0.0, 	ppm/h, 	0.0, 	0.0,
+		0.0, 	0.0, 	1.0, 	0.0,
+		-ppm*camP.x/w, 	-ppm*camP.y/h, 	0.0, 	1.0
+	])
+	var projFromWorldLoc = gl.getUniformLocation(program, "projFromWorld")
+	var worldFromLocalLoc = gl.getUniformLocation(program, "worldFromLocal")
+	gl.uniformMatrix4fv(projFromWorldLoc, false, projFromWorld)
+
+	var worldFromLocal = new Float32Array([
+		1.0, 	0.0, 	0.0, 	0.0,
+		0.0, 	1.0, 	0.0, 	0.0,
+		0.0, 	0.0, 	1.0, 	0.0,
+		0.0, 	0.0, 	0.0, 	1.0
+	])
+
+
+	var lineBuffer = gl.createBuffer()
+	gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer)
+	gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+		-0.5,	-0.5,	0.5,	-0.5,
+		0.5,	-0.5,	0.5, 	0.5,
+		0.5, 	0.5, 	-0.5,	0.5,
+		-0.5, 	0.5, 	-0.5,	-0.5
+	]), gl.STATIC_DRAW);
+
+	var pos = gl.getAttribLocation(program, "pos")
+	gl.enableVertexAttribArray(pos)
+	gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 0, 0)
+
+	function drawBox(x, y, boxw, boxh, xx, xy, yx, yy) {
+		worldFromLocal[0] = boxw*xx
+		worldFromLocal[1] = boxw*xy
+		worldFromLocal[4] = -boxh*yx
+		worldFromLocal[5] = -boxh*yy
+		worldFromLocal[12] = x;
+		worldFromLocal[13] = y;
+		gl.uniformMatrix4fv(worldFromLocalLoc, false, worldFromLocal)
+		gl.drawArrays(gl.LINES, 0, 8)
+	}
+
+	async function init() {
+		var t = 0.0;
+
+		var env = {}
+		env.drawBox = drawBox
+		env.cosf = Math.cos
+		env.sinf = Math.sin
+		env.sqrtf = Math.sqrtf
+
+
+		//const {instance} = await WebAssembly.instantiateStreaming(
+			//fetch("./fizzicks.wasm"), { env: env}
+		//)
+
+		var dt = 1.0/60.0
+
+		async function wa() {
+			const response = await(fetch('/fizzicks.wasm'))
+			const buffer = await response.arrayBuffer()
+			const obj = await WebAssembly.instantiate(buffer, { env: env })
+
+			addEventListener('mousedown', (event) => { obj.instance.exports.keydown() });
+			addEventListener('keydown', (event) => { 
+				if(event.keyCode == 32) {
+					console.log("party time")
+					obj.instance.exports.setPartyTime(1.0)
+				}
+			})
+
+			setInterval(() => {
+				gl.clearColor(0, 0, 0, 1)
+				gl.clear(gl.COLOR_BUFFER_BIT)
+				obj.instance.exports.fizzicks(dt)
+				ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+				ctx.fillStyle = 'white';
+				ctx.font = "40px Arial";
+				ctx.fillText('Fizzicks', 50, 50)
+				ctx.font = "20px Arial";
+				ctx.fillText('Left click to shoot', 50, 80)
+				ctx.fillText('Click space to party', 50, 110)
+			}, dt);
+		}
+
+		wa()
+	}
+
+	init();
+
+</script>
+
